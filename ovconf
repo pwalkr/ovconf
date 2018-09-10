@@ -1,0 +1,148 @@
+#!/bin/sh
+
+usage() {
+cat <<EOF
+# OpenVPN Config Generator
+
+    ovconfig [options] <action> [action params]
+
+## Options
+
+    -h, --help [conf]
+        Print this help or a sample conf file
+
+    -c, --conf
+        Path to conf parameters file
+
+    -p, --pki
+        Path to pki folder
+
+## Actions
+
+    client <name>
+        Generate client config, printed to stdout. The pki folder will be
+        searched for certificates and appended to the output.
+
+    server <output dir>
+        Generate server configs. All files will be output to directory.
+
+EOF
+}
+
+help_conf() {
+cat <<'EOF'
+
+ovc_dev="tun"
+
+ovc_proto="udp"
+ovc_port="1194"
+
+ovc_remote="my-server.net $ovc_port"
+
+ovc_cipher="AES-256-CBC"
+
+# Credentials de-escalation
+ovc_user="nobody"
+ovc_group="nobody"
+
+ovc_comp="comp-lzo"
+
+# Log file verbosity
+ovc_verb="3"
+EOF
+}
+
+gen_client() {
+	if [ -z "$client_name" ]; then
+		echo "Missing client name" 1>&2
+		return 1
+	fi
+
+	echo client
+	printc -r ovc_remote remote
+	printc    ovc_resolv_retry "resolv-retry"
+	printc    ovc_remote_cert_tls "remote-cert-tls"
+	printc -r ovc_cipher cipher
+	printc    ovc_comp
+}
+
+gen_server() {
+	if [ ! -d "$server_outdir" ]; then
+		echo "Missing server output directory" 1>&2
+		return 1
+	fi
+
+	printc -r ovc_proto proto
+	printc    ovc_comp
+}
+
+printc() {
+	local required=
+	if [ "$1" = "-r" ]; then
+		required=1
+		shift
+	fi
+	local conf="$1"
+	local value="$(eval echo "\$$conf")"
+	local key="$2"
+
+	if [ -z "$value" ]; then
+		if [ "$required" ]; then
+			echo "Missing required conf: $conf" 1>&2
+			exit 1
+		else
+			return
+		fi
+	fi
+
+	if [ "$key" ]; then
+		printf "$key "
+	fi
+	echo "$value"
+}
+
+conf="./conf"
+pki="./pki"
+
+client_name=
+server_outdir=
+
+while [ "$1" ]; do
+	case "$1" in
+		-c|--conf)
+			conf="$2"
+			shift
+		;;
+		-h|--help)
+			if [ "$2" = conf ]; then
+				help_conf
+			else
+				usage
+			fi
+			exit
+		;;
+		*)
+			if [ -z "$action" ]; then
+				action="$1"
+			elif [ "$action" = client ]; then
+				client_name="$1"
+			elif [ "$action" = server ]; then
+				server_outdir="$1"
+			fi
+		;;
+	esac
+	shift
+done
+
+if ! source "$conf"; then
+	echo "Failed to load conf file" 1>&2
+	exit 1
+fi
+
+if [ "$action" = client ]; then
+	gen_client
+elif [ "$action" = client ]; then
+	gen_server
+else
+	usage
+fi
