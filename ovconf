@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 usage() {
 cat <<EOF
@@ -8,9 +8,6 @@ cat <<EOF
 
 ## Options
 
-    -h, --help [conf]
-        Print this help or a sample conf file
-
     -c, --conf
         Path to conf parameters file
 
@@ -18,6 +15,9 @@ cat <<EOF
         Path to pki folder
 
 ## Actions
+
+    help [conf]
+        Print this help or a sample conf file
 
     client <name>
         Generate client config, printed to stdout. The pki folder will be
@@ -31,6 +31,7 @@ EOF
 
 help_conf() {
 cat <<'EOF'
+OVC_PKI="pki"
 
 ovc_dev="tun"
 
@@ -53,17 +54,61 @@ EOF
 }
 
 gen_client() {
-	if [ -z "$client_name" ]; then
+	local name="${args[0]}"
+	local file_ca=
+	local file_cert=
+	local file_key=
+
+	if [ -z "$name" ]; then
 		echo "Missing client name" 1>&2
+		return 1
+	fi
+
+	if [ ! -d "$OVC_PKI" ]; then
+		echo "Missing pki folder" 1>&2
+		return 1
+	fi
+
+	file_ca="$OVC_PKI/ca.crt"
+	file_cert="$OVC_PKI/issued/$name.crt"
+	file_key="$OVC_PKI/private/$name.key"
+
+	if [ ! -r "$file_ca" ]; then
+		echo "Missing public ca file" 1>&2
+		return 1
+	fi
+	if [ ! -r "$file_cert" ]; then
+		echo "Missing client public cert file" 1>&2
+		return 1
+	fi
+	if [ ! -r "$file_key" ]; then
+		echo "Missing client private key file" 1>&2
 		return 1
 	fi
 
 	echo client
 	printc -r ovc_remote remote
-	printc    ovc_resolv_retry "resolv-retry"
-	printc    ovc_remote_cert_tls "remote-cert-tls"
-	printc -r ovc_cipher cipher
-	printc    ovc_comp
+	printc ovc_dev dev
+	printc ovc_proto proto
+	printc ovc_resolv_retry "resolv-retry"
+	printc ovc_remote_cert_tls "remote-cert-tls"
+	printc ovc_cipher cipher
+	printc ovc_comp
+	echo "<ca>"
+	cat "$file_ca"
+	echo "</ca>"
+	echo "<cert>"
+	cat "$file_cert"
+	echo "</cert>"
+	echo "<key>"
+	cat "$file_key"
+	echo "</key>"
+	if [ -r "$OVC_PKI/ta.key" ]; then
+		echo "<tls-crypt>"
+		cat "$OVC_PKI/ta.key"
+		echo "</tls-crypt>"
+	fi
+	return 0
 }
 
 gen_server() {
@@ -72,8 +117,8 @@ gen_server() {
 		return 1
 	fi
 
-	printc -r ovc_proto proto
-	printc    ovc_comp
+	printc ovc_proto proto
+	printc ovc_comp
 }
 
 printc() {
@@ -101,9 +146,20 @@ printc() {
 	echo "$value"
 }
 
-conf="./conf"
-pki="./pki"
+source_conf() {
+	if [ -f "$conf" ]; then
+		. "$conf"
+	else
+		echo "Missing conf file"
+		return 1
+	fi
+}
 
+conf="./conf"
+OVC_PKI="./pki"
+
+action=
+args=
 client_name=
 server_outdir=
 
@@ -114,35 +170,29 @@ while [ "$1" ]; do
 			shift
 		;;
 		-h|--help)
-			if [ "$2" = conf ]; then
-				help_conf
-			else
-				usage
-			fi
+			usage
 			exit
 		;;
 		*)
-			if [ -z "$action" ]; then
-				action="$1"
-			elif [ "$action" = client ]; then
-				client_name="$1"
-			elif [ "$action" = server ]; then
-				server_outdir="$1"
-			fi
+			action="$1"
+			shift
+			args=("$@")
+			shift ${#args[@]}
 		;;
 	esac
 	shift
 done
 
-if ! source "$conf"; then
-	echo "Failed to load conf file" 1>&2
-	exit 1
-fi
-
 if [ "$action" = client ]; then
+	source_conf || exit 1
 	gen_client
-elif [ "$action" = client ]; then
+elif [ "$action" = server ]; then
+	source_conf || exit 1
 	gen_server
 else
-	usage
+	if [ "${args[0]}" = conf ]; then
+		help_conf
+	else
+		usage
+	fi
 fi

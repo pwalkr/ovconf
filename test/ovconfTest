@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+
+TEST_DIR="$(dirname "$0")"
+OVCONF="$TEST_DIR/../ovconf"
+
+TEST_WORKSPACE="$(mktemp -d)"
+
+setUp() {
+	rm --force --recursive "$TEST_WORKSPACE"
+	mkdir --parents "$TEST_WORKSPACE"
+}
+
+tearDown() {
+	rm --force --recursive "$TEST_WORKSPACE"
+}
+
+assertContains() {
+	local message=
+	if [ "$3" ]; then
+		# Need trailing space for output in failure
+		message="$1 "
+		shift
+	fi
+	local expected="$1"
+	local full="$2"
+	if echo "$full" | grep --quiet --fixed-strings "$expected"; then
+		assertTrue "${SHUNIT_TRUE}"
+	else
+		fail "${message}expected:<$expected> in string:<$full>"
+	fi
+}
+
+testHelp() {
+	assertContains "--help flag generates usage" \
+		"ovconfig [options] <action> [action params]" \
+		"$($OVCONF --help 2>&1)"
+	assertContains "help action generates usage" \
+		"ovconfig [options] <action> [action params]" \
+		"$($OVCONF help 2>&1)"
+	assertContains "help conf generates sample conf" \
+		'ovc_cipher="AES-256-CBC"' \
+		"$($OVCONF help conf 2>&1)"
+}
+
+testClientRequiredInput() {
+	local conf="$TEST_WORKSPACE/conf"
+	local output=
+
+	output="$($OVCONF client 2>&1)"
+	assertFalse "Missing client conf returns error" $?
+	assertEquals "Missing conf file" "$output"
+
+	touch "$conf"
+	output="$($OVCONF --conf "$conf" client 2>&1)"
+	assertFalse "Missing client name returns error" $?
+	assertEquals "Missing client name" "$output"
+
+	output="$($OVCONF --conf "$conf" client name 2>&1)"
+	assertFalse "Missing pki returns error" $?
+	assertEquals "Missing pki folder" "$(echo "$output" | tail --lines 1)"
+}
+
+testClientRequiredCerts() {
+	local conf="$TEST_WORKSPACE/conf"
+	local pki="$TEST_WORKSPACE/pki"
+	local output=
+
+	touch "$conf"
+
+	mkdir --parents "$pki/issued" "$pki/private"
+	output="$($OVCONF --conf "$conf" --pki "$pki" client name 2>&1)"
+	assertNotEquals "PKI can be set on CLI" \
+		"Missing pki folder" \
+		"$(echo "$output" | tail --lines 1)"
+	# Or as a variable in conf
+	echo "OVC_PKI='$pki'" >> "$conf"
+	output="$($OVCONF --conf "$conf" client name 2>&1)"
+	assertFalse "Missing public ca returns error" $?
+	assertEquals "Missing public ca file" "$(echo "$output" | tail --lines 1)"
+
+	touch "$pki/ca.crt"
+	output="$($OVCONF --conf "$conf" client name 2>&1)"
+	assertFalse "Missing client public cert returns error" $?
+	assertEquals "Missing client public cert file" "$(echo "$output" | tail --lines 1)"
+
+	touch "$pki/issued/name.crt"
+	output="$($OVCONF --conf "$conf" client name 2>&1)"
+	assertFalse "Missing client private key returns error" $?
+	assertEquals "Missing client private key file" "$(echo "$output" | tail --lines 1)"
+
+	touch "$pki/private/name.key"
+	output="$($OVCONF --conf "$conf" client name 2>&1)"
+	assertFalse "Missing client conf param returns error" $?
+	assertEquals "Missing required conf: ovc_remote" "$(echo "$output" | tail --lines 1)"
+
+	echo 'ovc_remote=remote' >> "$conf"
+	$OVCONF --conf "$conf" client name &>/dev/null
+	assertTrue "Minimal config returns success" $?
+}
+
+testClientGenMinimal() {
+	local conf="$TEST_WORKSPACE/conf"
+	local pki="$TEST_WORKSPACE/pki"
+	local output=
+
+	touch "$conf"
+
+	mkdir --parents "$pki/issued" "$pki/private"
+	echo "myca"   > "$pki/ca.crt"
+	echo "mycert" > "$pki/issued/name.crt"
+	echo "mykey"  > "$pki/private/name.key"
+
+	cat <<-EOF > "$conf"
+		OVC_PKI='$pki'
+		ovc_remote=remote
+	EOF
+
+	cat <<-EOF > "$TEST_WORKSPACE/expected"
+		client
+		remote remote
+		<ca>
+		myca
+		</ca>
+		<cert>
+		mycert
+		</cert>
+		<key>
+		mykey
+		</key>
+	EOF
+
+	if diff -U 3 "$TEST_WORKSPACE/expected" <( $OVCONF --conf "$conf" client name ); then
+		assertTrue "${SHUNIT_TRUE}"
+	else
+		fail "client action generates expected config"
+	fi
+
+	cat <<-EOF >> "$TEST_WORKSPACE/expected"
+		<tls-crypt>
+		takey
+		</tls-crypt>
+	EOF
+	echo "takey" > "$pki/ta.key"
+
+	if diff -U 3 "$TEST_WORKSPACE/expected" <( $OVCONF --conf "$conf" client name ); then
+		assertTrue "${SHUNIT_TRUE}"
+	else
+		fail "client action injects ta.key if available"
+	fi
+}
+
+testServer() {
+	fail "implement this"
+}
+
+source $TEST_DIR/shunit2/shunit2
