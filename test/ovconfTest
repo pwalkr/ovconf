@@ -149,6 +149,48 @@ testClientGenMinimal() {
 	fi
 }
 
+testClientGenFull() {
+	local conf="$TEST_WORKSPACE/conf"
+	local pki="$TEST_WORKSPACE/pki"
+	local output=
+
+	touch "$conf"
+
+	mkdir --parents "$pki/issued" "$pki/private"
+	echo "myca"   > "$pki/ca.crt"
+	echo "mycert" > "$pki/issued/name.crt"
+	echo "mykey"  > "$pki/private/name.key"
+	echo "takey"  > "$pki/ta.key"
+
+	cat <<-EOF > "$conf"
+		OVC_PKI='$pki'
+
+		ovc_cipher=cipher
+		ovc_comp="comp-lzo"
+		ovc_remote=remote
+	EOF
+
+	cat <<-EOF > "$TEST_WORKSPACE/expected"
+		client
+		remote remote
+		<ca>
+		myca
+		</ca>
+		<cert>
+		mycert
+		</cert>
+		<key>
+		mykey
+		</key>
+	EOF
+
+	if diff -U 3 "$TEST_WORKSPACE/expected" <( $OVCONF --conf "$conf" client name ); then
+		assertTrue "${SHUNIT_TRUE}"
+	else
+		fail "client action generates expected config"
+	fi
+}
+
 testServer() {
 	fail "implement this"
 }
